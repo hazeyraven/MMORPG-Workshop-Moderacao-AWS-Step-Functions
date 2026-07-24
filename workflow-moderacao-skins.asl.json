@@ -1,0 +1,250 @@
+{
+  "Comment": "Workflow de Moderacao de Skins MMORPG com Moderação Multi-nível e Tratamento de Erros",
+  "StartAt": "AnalisarImagemComRekognition",
+  "States": {
+    "AnalisarImagemComRekognition": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:rekognition:detectModerationLabels",
+      "Parameters": {
+        "Image": {
+          "S3Object": {
+            "Bucket.$": "$.detail.bucket.name",
+            "Name.$": "$.detail.object.key"
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "RegistrarErroDynamoDB"
+        }
+      ],
+      "Next": "AvaliarResultadoModeracao"
+    },
+    "AvaliarResultadoModeracao": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ModerationLabels[0]",
+          "IsPresent": false,
+          "Next": "MoverParaApprovedBucket"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.ModerationLabels[0]",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.ModerationLabels[0].Confidence",
+              "NumericGreaterThanEquals": 90
+            }
+          ],
+          "Next": "MoverParaRejectedBucket"
+        }
+      ],
+      "Default": "MoverParaPendingReview"
+    },
+    "MoverParaPendingReview": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:copyObject",
+      "Parameters": {
+        "Bucket": "s3-workshop-manual-review",
+        "CopySource.$": "States.Format('{}/{}', $.detail.bucket.name, $.detail.object.key)",
+        "Key.$": "$.detail.object.key"
+      },
+      "Next": "RegistrarRevisaoManual"
+    },
+    "MoverParaApprovedBucket": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:copyObject",
+      "Parameters": {
+        "Bucket": "s3-workshop-approved",
+        "CopySource.$": "States.Format('{}/{}', $.detail.bucket.name, $.detail.object.key)",
+        "Key.$": "$.detail.object.key"
+      },
+      "Next": "DeletarBucketPendingAprovado"
+    },
+    "DeletarBucketPendingAprovado": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:deleteObject",
+      "Parameters": {
+        "Bucket.$": "$.detail.bucket.name",
+        "Key.$": "$.detail.object.key"
+      },
+      "Next": "AtualizarStatusAprovadoDynamoDB"
+    },
+    "AtualizarStatusAprovadoDynamoDB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "MMORPG-Workshop-Items",
+        "Key": {
+          "SkinId": {
+            "S.$": "$.detail.object.key"
+          }
+        },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": {
+          "#s": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "APPROVED"
+          }
+        }
+      },
+      "Next": "NotificarAprovacaoPlayer"
+    },
+    "NotificarAprovacaoPlayer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-2:123456789012:WorkshopApprovalTopic",
+        "Message": "Sua skin foi aprovada com sucesso e ja esta disponível na loja!"
+      },
+      "End": true
+    },
+    "MoverParaRejectedBucket": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:copyObject",
+      "Parameters": {
+        "Bucket": "s3-workshop-rejected",
+        "CopySource.$": "States.Format('{}/{}', $.detail.bucket.name, $.detail.object.key)",
+        "Key.$": "$.detail.object.key"
+      },
+      "Next": "DeletarBucketPendingRejeitado"
+    },
+    "DeletarBucketPendingRejeitado": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:deleteObject",
+      "Parameters": {
+        "Bucket.$": "$.detail.bucket.name",
+        "Key.$": "$.detail.object.key"
+      },
+      "Next": "RegistrarRejeicaoDynamoDB"
+    },
+    "RegistrarRejeicaoDynamoDB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "MMORPG-Workshop-Items",
+        "Key": {
+          "SkinId": {
+            "S.$": "$.detail.object.key"
+          }
+        },
+        "UpdateExpression": "SET #s = :status, #r = :reason",
+        "ExpressionAttributeNames": {
+          "#s": "status",
+          "#r": "reason"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "REJECTED"
+          },
+          ":reason": {
+            "S": "Alta confianca de conteudo improprio detectado automatizado"
+          }
+        }
+      },
+      "Next": "NotificarRejeicaoPlayer"
+    },
+    "NotificarRejeicaoPlayer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-2:123456789012:WorkshopRejectionTopic",
+        "Message": "Sua skin foi rejeitada por violacao automatica das diretrizes de conteudo."
+      },
+      "End": true
+    },
+    "RegistrarRevisaoManual": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "MMORPG-Workshop-Items",
+        "Key": {
+          "SkinId": {
+            "S.$": "$.detail.object.key"
+          }
+        },
+        "UpdateExpression": "SET #s = :status, #r = :reason",
+        "ExpressionAttributeNames": {
+          "#s": "status",
+          "#r": "reason"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "PENDING_MANUAL_REVIEW"
+          },
+          ":reason": {
+            "S": "Confianca media/baixa de moderacao. Aguardando revisao humana."
+          }
+        }
+      },
+      "Next": "NotificarEquipeModeracao"
+    },
+    "NotificarEquipeModeracao": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-2:123456789012:WorkshopManualReviewTopic",
+        "Message": "Uma nova skin requer revisao manual da equipe de moderacao."
+      },
+      "End": true
+    },
+    "RegistrarErroDynamoDB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "MMORPG-Workshop-Items",
+        "Key": {
+          "SkinId": {
+            "S.$": "$.detail.object.key"
+          }
+        },
+        "UpdateExpression": "SET #s = :status, #r = :reason",
+        "ExpressionAttributeNames": {
+          "#s": "status",
+          "#r": "reason"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "ERROR"
+          },
+          ":reason": {
+            "S": "Falha interna no processamento da imagem"
+          }
+        }
+      },
+      "Next": "NotificarErroPlayer"
+    },
+    "NotificarErroPlayer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-2:123456789012:WorkshopErrorTopic",
+        "Message": "Houve um erro ao processar sua skin. Por favor, tente enviar o arquivo novamente."
+      },
+      "Next": "FalhaProcessamento"
+    },
+    "FalhaProcessamento": {
+      "Type": "Fail",
+      "Error": "ProcessingError",
+      "Cause": "Ocorreu um erro no processamento do fluxo de moderação."
+    }
+  }
+}
