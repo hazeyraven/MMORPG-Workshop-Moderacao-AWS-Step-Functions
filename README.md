@@ -9,7 +9,9 @@ MMORPG Workshop — Moderação Serverless com AWS Step Functions
 
 Este repositório contém a documentação, diagramas e código de orquestração do módulo de moderação de ativos da comunidade (*Skins e Texturas*) para a infraestrutura backend de um MMORPG.
 
-O projeto foi desenvolvido como entregável do desafio **"Explorando Workflows Automatizados com AWS Step Functions"** do bootcamp **GFT - Fundamentos de Cloud com AWS** na [Digital Innovation One (DIO)](https://www.google.com/search?q=https://www.dio.me/).
+O projeto foi desenvolvido como entregável do desafio **"Explorando Workflows Automatizados com AWS Step Functions"** do bootcamp **GFT - Fundamentos de Cloud com AWS** na [Digital Innovation One (DIO)](https://www.dio.me/).
+
+Continuação do projeto [Arquitetura de Nuvem AWS: Servidor de MMORPG](https://github.com/hazeyraven/Arquitetura-de-Nuvem-AWS-Servidor-de-MMORPG)
 
 ---
 
